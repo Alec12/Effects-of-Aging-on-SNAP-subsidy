@@ -1,4 +1,5 @@
 # Effects of Aging on SNAP Subsidy
+by: Taylor Han, Alec Naidoo, Shruti Gupta
 
 **Introduction**
 
