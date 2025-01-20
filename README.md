@@ -19,6 +19,8 @@ Our initial regression analysis examines the relationship between SNAP subsidy a
 
 ![KDE-Plot-Snap-by-age-group](assets/img/KDE-SNAP-by-AGE-GROUP.jpeg)
 
+![SNAP-by-AGE-Scatter-Plot](assets/img/SNAP-by-AGE-Scatter-Plot.jpeg)
+
 **Resources**
 
 * [**Presentation**](https://github.com/Alec12/Effects-of-Aging-on-SNAP-subsidy/blob/main/Analyzing_SNAP_Income_A_Descriptive_Analysis.pdf)
