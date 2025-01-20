@@ -1,0 +1,222 @@
+---
+title: "Lab2 - AN - Analysis"
+author: "Alec Naidoo"
+date: "2024-03-22"
+output: pdf_document
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(wooldridge)
+library(car)
+library(lmtest)
+library(sandwich)
+library(stargazer)
+input_data <- read.csv("/Users/alecnaidoo/Downloads/asecpub23csv/pppub23.csv")
+```
+
+# Intro
+So far, my goal is to find any covariate trends with variables and age, in order to describe welfare/government assistance programs. We initialize the analysis with a basic model, and then add complexity with covariate measures that we find in the data.
+
+First we can perform data wrangling. Ultimately we are only left with 734 of 146k observations (0.5% of dataset), that the survey reports have received public assistance.
+
+Second, by individual plotting we can begin to understand relationships of age with other subtopics related to non-cash benefits and supplementary poverty measures, answered through the survey results.
+
+# Data Wrangling
+
+```{r data wrangling, include = FALSE}
+df <- input_data %>%
+  mutate(unique_id = paste0(PH_SEQ, PPPOS))
+
+# check if records are unique
+if (anyDuplicated(df$unique_id) == 0) {
+  message("No duplicates found for unique_id")
+} else {
+  message("duplicates found in unique_id")
+}
+
+person_df <- df %>%
+  filter(!A_AGE %in% c(85, 80) # Remove categorical data for those grouped in 80 and 85
+         & PAW_YN == 1 # Set to the universe of individuals that received CASH assistance from a state or county welfare program
+         & PAW_VAL > 0) 
+
+
+# if ("PAW_VAL" %in% names(person_df)) {
+#   print("Variable exists!")
+# } else {
+#   print("Variable does not exist.")
+# }
+```
+
+```{r data wrangling, include = FALSE}
+new <- df %>%
+  filter(!A_AGE %in% c(85, 80) # Remove categorical data for those grouped in 80 and 85
+         & OI_YN == 1 ) 
+
+```
+
+
+
+# Build Basic Model
+This will serve as our baseline when comparing more complex models.
+```{r basic model creation, include = TRUE}
+
+model <- lm(PAW_VAL ~ A_AGE, data = person_df)
+
+print(summary(model))
+```
+
+## Basic Plot of Age versus Govt Assistance Income
+```{r pressure, echo=TRUE}
+# Create ggplot
+ggplot(person_df, aes(x = A_AGE, y = PAW_VAL)) +
+  geom_point() +  # Add points
+  labs(x = "Age", y = "PAW_VAL", title = "PAW_VAL by Age") + # Add axis labels and title
+  geom_smooth(method = "lm", se = FALSE, color = "red") 
+```
+
+## Scatter Plot all relationships withing subtopics "Non-Cash Benefits" and "Supplementary Poverty Measures" (can include more vars)
+``` {r adding tons of welfare parameters to look for relationships}
+
+# Create scatterplot matrix focusing on the relationship with A_AGE
+pairs(~ A_AGE + PAW_VAL + PAW_MON + PAW_TYP + PAW_YN + PENPLAN + WICYN + CHCARE_YN + CHELSEW_YN + CHSP_VAL + CHSP_YN + CSP_VAL + CSP_YN, data = person_df)
+
+
+```
+Although this accomplishes the goal, most of the data is unreadable and hence we proceed with the below method to find relationships.
+
+## Cycle through individual plots of Age and 'Other' Variables with regression line (can include more vars)
+``` {r relationship between csp_value, echo=TRUE}
+
+# List to store plots
+plots_list <- list()
+
+# List of variables
+variables_to_plot <- c("PAW_VAL", "PAW_MON", "PAW_TYP", "PAW_YN", "PENPLAN", "WICYN", "CHCARE_YN", "CHELSEW_YN", "CHSP_VAL", "CHSP_YN", "CSP_VAL", "CSP_YN")
+
+# Loop through each variable and create scatterplot against A_AGE
+for (variable in variables_to_plot) {
+  plot <- ggplot(person_df, aes_string(x = "A_AGE", y = variable)) +
+    geom_point() +
+    labs(x = "Age", y = variable) +
+    ggtitle(paste(variable, "by Age")) +
+    geom_smooth(method = "lm", se = FALSE, color = "red") 
+  
+  plots_list[[variable]] <- plot  # Store the plot in the list
+}
+
+# Print each plot
+for (variable in names(plots_list)) {
+  print(plots_list[[variable]])
+}
+
+
+```
+## Plot Age vs Govt Assistance Income wrt observed categorical variables
+While above plots are interesting, we can further examing any particular trends in the main relationship wrt indicator variables.
+
+``` {r relationship between age and welfare_income wrt var colors, echo=TRUE}
+
+# List to store plots
+plots_list <- list()
+
+# List of variables
+categorical_variables_to_plot <- c("A_SEX","PAW_MON", "PAW_TYP", "PENPLAN", "WICYN", "CHCARE_YN", "CHELSEW_YN", "CHSP_YN", "CSP_YN", "SEX_WICYN", "PRDTRACE")
+
+# Copy dataset in case
+person_df2 <- person_df
+
+# Create Combined Columns
+person_df2$SEX_WICYN <- interaction(person_df2$A_SEX, person_df2$WICYN, drop = TRUE)
+
+# Make variables categorical in R
+person_df2$A_SEX <- factor(person_df2$A_SEX)
+person_df2$PAW_MON <- factor(person_df2$PAW_MON)
+person_df2$PAW_TYP <- factor(person_df2$PAW_TYP)
+person_df2$PENPLAN <- factor(person_df2$PENPLAN)
+person_df2$WICYN <- factor(person_df2$WICYN)
+person_df2$CHCARE_YN <- factor(person_df2$CHCARE_YN)
+person_df2$CHELSEW_YN <- factor(person_df2$CHELSEW_YN)
+person_df2$CHSP_YN <- factor(person_df2$CHSP_YN)
+person_df2$CSP_YN <- factor(person_df2$CSP_YN)
+
+person_df2$SEX_WICYN <- factor(person_df2$SEX_WICYN)
+person_df2$PRDTRACE <- factor(person_df$PRDTRACE)
+
+# Loop through each variable and create scatterplot against A_AGE
+for (variable in categorical_variables_to_plot) {
+  plot <- ggplot(person_df2, aes_string(x = "A_AGE", y = "PAW_VAL", color = variable)) +
+    geom_point() +
+    geom_smooth(method = "lm", se = FALSE) +
+    labs(x = "Age", y = variable) +
+    ggtitle(paste("Assisted Income by Age wrt: ", variable))
+  
+  plots_list[[variable]] <- plot  # Store the plot in the list
+}
+
+# Print each plot
+for (variable in names(plots_list)) {
+  print(plots_list[[variable]])
+}
+
+
+```
+## Test Log manipulation and factorizing AGE variable
+
+``` {r}
+model_a <- lm(PAW_VAL ~ A_AGE + I(A_AGE^2), data = person_df2)
+
+summary(model_a)
+```
+
+
+
+```{r compare basic model and complex model 1, include = TRUE}
+
+model <- lm(PAW_VAL ~ A_AGE, data = person_df)
+model2 <- lm(PAW_VAL ~ log(A_AGE) + A_AGE, data = person_df2)
+model3 <- lm(log(PAW_VAL) ~ A_AGE, data = person_df2)
+model4 <- lm(PAW_VAL ~ as.factor(A_AGE), data = person_df2)
+print(summary(model))
+print(summary(model2))
+print(summary(model3))
+print(summary(model4))
+```
+
+We don't see much increase in explained variation by these simple manipulations, although for model 2 (applying log to the outcome variable 'PAW_VAL') we observe a statistically significant coefficient for age (**). Naive interpretation would be that age is a more consistent predictor of log(govt assistance income).
+
+```{r plot age vs log(paw_val), echo=TRUE}
+ggplot(person_df, aes(x = A_AGE, y = log(PAW_VAL))) +
+  geom_point() +  # Add points
+  labs(x = "Age", y = "log PAW_VAL", title = "PAW_VAL by Age") + # Add axis labels and title
+  geom_smooth(method = "lm", se = FALSE, color = "red") 
+```
+
+
+## Include more complexity in the model
+```{r compare basic model and complex model 1, include = TRUE}
+
+model <- lm(PAW_VAL ~ A_AGE, data = person_df)
+model2 <- lm(log(PAW_VAL) ~ A_AGE, data = person_df2)
+model3 <- lm(log(PAW_VAL) ~ A_AGE + WICYN, data = person_df2)
+model4 <- lm(log(PAW_VAL) ~ A_AGE*SEX_WICYN, data = person_df2)
+print(summary(model))
+print(summary(model2))
+print(summary(model3))
+print(summary(model4))
+```
+
+
+```{r sandbox graphs, echo=TRUE}
+ggplot(person_df, aes(x = A_AGE, y = log(PAW_VAL))) +
+  geom_point() +  # Add points
+  labs(x = "Age", y = "log PAW_VAL", title = "PAW_VAL by Age") + # Add axis labels and title
+  geom_smooth(method = "lm", se = FALSE, color = "red") 
+```
+
+
+
+
+
+

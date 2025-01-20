@@ -1,0 +1,343 @@
+---
+title: "Lab 2: Effects of Aging on SNAP Subsidy"
+author: "Taylor Han, Alec Naidoo, Shruti Gupta"
+date: "2024-04-12"
+output:
+  pdf_document:
+    toc: true
+    number_sections: true
+urlcolor: blue
+header-includes:
+  - \usepackage{titlesec}
+  - \usepackage{pdflscape}
+  - \usepackage{dcolumn}
+  - \usepackage{tabularray}
+  - \usepackage{float}
+  - \usepackage{graphicx}
+  - \usepackage{codehigh}
+  - \usepackage[normalem]{ulem}
+---
+
+```{=tex}
+\newpage
+\setcounter{page}{1}
+```
+```{r package load, include = FALSE}
+# Read in Data, Wrangle, and create exploration set 
+library(kableExtra)
+
+knitr::opts_chunk$set(echo = TRUE)
+source("lab02_data_prep.R")
+
+```
+
+# Introduction and Context
+
+Social welfare programs such as the Supplemental Nutrition Assistance Program (SNAP) play a critical role in supporting vulnerable populations in the United States. However, ensuring equitable access to these programs poses a significant challenge. Opponents of SNAP funding argue that the program is abused by recipients, encourages dependency by certain populations, or acts as a disincentive to work. \footnote{The Washington Post. "That is a claim we tend to hear alot -- that SNAP discourages work, or that adults on SNAP aren't working." (2017)} [Our analysis](https://github.com/mids-w203/lab-2-lab2_taylor_shruti_alec/tree/main) examines demographics targeted by welfare programs to inform political discourse around the effectiveness and accessibility of similar public assistance initiatives.[^1] In particular, we address the research question:
+
+[^1]: Github repository: [found here.](https://github.com/mids-w203/lab-2-lab2_taylor_shruti_alec/tree/main)
+
+```{=tex}
+\begin{quote}
+  \textit{How does the distribution of SNAP income vary across ages, utilizing linear regression to reveal underlying age-related trends?}
+\end{quote}
+```
+The dataset for our analysis comes from the Annual Social and Economic Supplement (ASEC) of the Current Population Survey (CPS). The survey is administered at the household level and a "reference person" generally responds on behalf of their household. \footnote{United Statues Census Bureau: "The person who responds is called the ‘‘reference person’’ and usually is the person who either owns or rents the housing unit. If the reference person is not knowledgeable about the employment status of the others in the household, attempts are made to contact those individuals directly." (2021)} It also employs the supplementary poverty measure (SPM) to more accurately measure poverty nationwide by taking into account in-kind benefits and regional economic differences. SPM statistics are compiled for each person within a unit. A unit expands upon the traditional family unit used in the original poverty measure by including cohabiters that may share resources. One person is recorded as the head of each unit.
+
+# Data and Methodology
+
+We concentrate on two distinct groups of features to characterize the population across age groups: individual and family demographics. We identify variables from the ASEC dataset that operationalize features of these two groups and develop two separate sets of models to describe their effects on aging and SNAP subsidy. SNAP recipients are operationalized by SPM unit heads, and corresponding individual and family characteristics are operationalized by their responses.
+
+The sample data contains `r format(nrow(input_data), big.mark = ",")` individual responses to the ASEC. Because ages 80 and up are recorded in categorical variables, we exclude individuals over the age of 79 to maintain the metric integrity of our age variable. We isolated SPM unit heads and excluded observations reporting zero SNAP income. SNAP allotments are only uniform across the 48 contiguous states, so we excluded recipients located in Alaska or Hawaii. Our final dataset consequently contains `r format(nrow(persons_snap_df) + nrow(persons_snap_exploration_df), big.mark = ",")` observations.
+
+To maintain the large-sample regression assumptions, we note that the CPS sample design prioritizes independent and identically distributed (IID) sampling through the use of random multi-stage stratified sampling. To maintain the assumption of a unique best linear predictor (BLP), we used kurtosis tests and covariance matrices to ensure finite covariance between variables, and used VIF tests to inform our exclusion of perfectly collinear variables.
+
+<!-- \begingroup -->
+
+<!-- \scriptsize -->
+
+<!-- \[ -->
+
+<!-- \begin{aligned} -->
+
+<!-- SPM\_SNAPSUB = \beta_0 + \beta_1 \times A\_AGE + \epsilon -->
+
+<!-- \end{aligned} -->
+
+<!-- \] -->
+
+<!-- \endgroup -->
+
+```{r create basic model, include = FALSE, echo = FALSE, warning=FALSE, message=FALSE}
+
+basic_model <- lm(SPM_SNAPSUB ~ A_AGE, data = persons_snap_df)
+
+summary(basic_model)
+
+```
+
+# Results
+
+Our initial regression analysis examines the relationship between SNAP subsidy and recipient age and reveals a statistically significant, negative effect of age on SNAP subsidy. This suggests that, on average, each additional year of age is associated with a decrease of `r round(summary(basic_model)$coefficients["A_AGE", "Estimate"], digits = 2)` in SNAP subsidy.
+```{r agebreaks visual, include = FALSE, echo = FALSE}
+# Keeping this code in case we need this visual
+age_breaks <- c(15, 20, seq(from = 30, to = ceiling(max(persons_snap_df$A_AGE) / 10) * 10, by = 10))
+
+fig_persons_snap_df <- persons_snap_df %>% 
+  mutate(age_group = cut(A_AGE, breaks = age_breaks, include.lowest = TRUE, right = FALSE))
+
+total_n <- nrow(fig_persons_snap_df)
+
+age_group_summ <- fig_persons_snap_df %>% 
+  group_by(age_group) %>% 
+  summarise(
+    avg_SNAP = round(mean(SPM_SNAPSUB, na.rm = TRUE), digits = 0),
+    count = n(),
+    proportion = round(count / total_n, digits = 2)
+  ) %>% 
+  ungroup()  
+
+kable_table <- knitr::kable(age_group_summ, 
+                            col.names = c("Age Group", "Average SNAP Income", "Frequency", "Proportion"),
+                            caption = "Average SNAP Income by Age Group", 
+                            booktabs = TRUE) 
+```
+
+```{r create plot for SNAP by Age, echo=FALSE, fig.height=2, fig.width=5, message=FALSE, warning=FALSE}
+# Keeping this code in case we need this visual
+library(ggplot2)
+
+min_age <- min(persons_snap_exploration_df$A_AGE)
+
+# Group data by age and summarize the count of records for each age
+age_count <- persons_snap_exploration_df %>%
+  group_by(A_AGE) %>%
+  summarise(count = n(), .groups = 'drop') 
+
+# Base ggplot object with points and linear model
+age_snap_plot <- ggplot(persons_snap_exploration_df, aes(x = A_AGE, y = SPM_SNAPSUB)) +
+  geom_point(alpha = 0.6, color = "#0066CC") +
+  geom_smooth(method = "lm", color = "#CC0000", size = 0.75, se = TRUE) +
+  theme_minimal() +
+  labs(
+    x = "Age",
+    y = "SNAP Subsidy",
+    title = "Relationship between Age and SNAP Subsidy",
+    caption = "Exploration Set: 2023 Persons Dataset from ASEC"
+  ) +
+  scale_x_continuous(limits = c(min_age, NA)) +
+  scale_y_continuous(labels = dollar) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.caption = element_text(hjust = 0),
+    axis.text = element_text(color = "grey20"),
+    axis.title = element_text(face = "bold", color = "grey20"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
+
+age_snap_plot
+
+```
+
+## Individual Demographics Model
+
+To elaborate on the unexplained variance represented by the error term in our preliminary model, we extend our analysis to a more comprehensive model that includes the individual's race, gender, college degree attainment, and receipt of social security income.
+
+<!-- \begingroup -->
+
+<!-- \scriptsize -->
+
+<!-- \[ -->
+
+<!-- \begin{aligned} -->
+
+<!-- SPM\_SNAPSUB = & \ \beta_0 + \beta_1 \times A\_AGE + \beta_2 \times MALE1 + \beta_3 \times A\_AGE:MALE1 + \beta_4 \times DEGREE1 \\ -->
+
+<!-- & + \beta_5 \times RACE\_AmericanIndianAlaskanNative + \beta_6 \times RACE\_Asian + \beta_7 \times RACE\_Black \\ -->
+
+<!-- & + \beta_8 \times RACE\_HawaiianPacificIslander + \beta_9 \times RACE\_Hispanic + \beta_{10} \times RACE\_Mixed \\ -->
+
+<!-- & + \beta_{11} \times RECEIVE\_SS\_INCOME1 + \epsilon -->
+
+<!-- \end{aligned} -->
+
+<!-- \] -->
+
+<!-- \endgroup -->
+
+```{r create demographic model, include = FALSE, echo = FALSE, warning=FALSE, message=FALSE}
+# # Releveling RACE column
+persons_snap_df$RACE <- relevel(persons_snap_df$RACE, ref = "White only")
+
+socioeconomic_model <- 
+  lm(SPM_SNAPSUB ~ A_AGE + DEGREE + NOT_RECEIVE_SS_INCOME, data = persons_snap_df)
+
+total_demo_model <- 
+  lm(SPM_SNAPSUB ~ A_AGE + A_AGE * MALE + RACE + DEGREE + NOT_RECEIVE_SS_INCOME , data = persons_snap_df)
+
+summary_total_model <- summary(total_demo_model)
+
+age_coeff <- summary_total_model$coefficients["A_AGE", "Estimate"]
+age_male_interaction_coeff <- summary_total_model$coefficients["A_AGE:MALE1", "Estimate"]
+combined_effect <- age_coeff + age_male_interaction_coeff
+
+total_model_se = sqrt(diag(vcovHC(total_demo_model)))
+```
+
+```{r Model Assumption Demographic Model, include = FALSE, echo = FALSE}
+# Check model residuals 
+check_residuals <- plot_model_residuals(summary_total_model, data = persons_snap_df, response_var = "SPM_SNAPSUB")
+# Check QQ Plot
+# Use ggplot 
+df_residuals <- data.frame(residuals = residuals)
+
+qq_plot_demo <- ggplot(df_residuals, aes(sample = residuals)) + 
+  stat_qq()+ 
+  stat_qq_line(col = "steelblue")+
+  theme_minimal() + 
+  labs(title = "QQ Plot of Complex Model Residuals",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles")
+
+# Check for Kurosis heavy tails, finite variance for all (x,y)
+kurtosis_SPM_SNAPSUB <- kurtosis(persons_snap_df$SPM_SNAPSUB, na.rm = TRUE)
+kurtosis_A_AGE <- kurtosis(persons_snap_df$A_AGE, na.rm = TRUE)
+
+skewness(persons_snap_df$A_AGE)
+
+print(kurtosis_SPM_SNAPSUB)
+print(kurtosis_A_AGE)
+
+# Convert factors to numeric for variance and covariance calculations
+persons_snap_df$MALE <- as.numeric(as.character(persons_snap_df$MALE))
+persons_snap_df$DEGREE <- as.numeric(as.character(persons_snap_df$DEGREE))
+persons_snap_df$NOT_RECEIVE_SS_INCOME <- as.numeric(as.character(persons_snap_df$NOT_RECEIVE_SS_INCOME))
+
+vars_for_covariance <- persons_snap_df[, c("SPM_SNAPSUB", "A_AGE", "MALE", "DEGREE", "NOT_RECEIVE_SS_INCOME")]
+
+cov_matrix <- cov(vars_for_covariance, use = "complete.obs")
+
+print(cov_matrix)
+
+library(car)
+
+# Check Multicollinearity
+vif(total_demo_model)
+
+```
+
+```{r individual models table, echo=FALSE,results='asis'}
+
+individmods=list("Base" = basic_model, "Full" = total_demo_model)
+modelsummary(individmods,
+             title="Individual Characteristics Regression Results",
+             stars = c('*' = .05, '**' = .01, '***' = .001),
+              vcov = "robust",
+             gof_map = c("adj.r.squared","F"),
+             output = "kableExtra",
+             estimate  = "{estimate}{stars} ({std.error})",
+             statistic= NULL,
+             coef_rename = c("A_AGE" = "Age", 
+                             "MALE1" = "Male", 
+                             "RACEAmerican Indian/Alaskan Native only" = "American Indian/Alaskan Native only", 
+                             "RACEHawaiian/Pacific Islander only" = "Hawaiian/Pacific Islander only",
+                             "RACEAsian only" = "Asian only",
+                             "RACEHispanic only" = "Hispanic only",
+                             "RACEBlack only" = "Black only",
+                             "RACEMixed" = "Mixed race",
+                             "DEGREE1" = "Degree",
+                             "NOT_RECEIVE_SS_INCOME1"= "Not Receiving SS Income"
+                             ),
+             coef_omit = (-1:-10),
+             ) %>%   kable_styling(latex_options = c("HOLD_position"))
+
+
+```
+
+We observe the interaction term effect on the age coefficient, concluding an estimated dollar `r round(combined_effect, digits = 2)` dollar decrease per year of age for male SNAP recipients compared to a `r get_coef(total_demo_model, "A_AGE")` decrease for female SNAP recipients. The socioeconomic variable coefficients indicate that individuals without a college degree receive `r get_coef(total_demo_model, "DEGREE1")` lower SNAP subsidies and individuals without social security benefits are generally allocated to `r get_coef(total_demo_model, "NOT_RECEIVE_SS_INCOME1")` more SNAP subsidies.
+
+When examining race, we observe in particular that individuals of American Indian/Alaskan Native descent experience `r get_coef(total_demo_model, "RACEAmerican Indian/Alaskan Native only")` more SNAP subsidy respectively compared to individuals self-identified as white, all else equal. These effects cannot be attributed to differing state allotments because of our exclusion of residents of Alaska and Hawaii.
+
+## Family Demographics Model
+
+```{r fammodels code, echo=FALSE, message=FALSE, warning=FALSE, results='asis'}
+basic_model <- lm(SPM_SNAPSUB ~ A_AGE, data = persons_snap_df)
+
+bse=sqrt(diag(vcovHC(basic_model)))
+
+#Adding in NumKids to hold constant in gender model
+model1 <- lm(SPM_SNAPSUB ~ A_AGE + MALE + MALE*A_AGE + SPM_NUMKIDS, data = persons_snap_df)
+m1se=sqrt(diag(vcovHC(model1)))
+
+#add on # of adults
+model2 <- lm(SPM_SNAPSUB ~ A_AGE + SPM_NUMKIDS + SPM_NUMADULTS, data = persons_snap_df)
+m2se=sqrt(diag(vcovHC(model2)))
+
+#add renting status and its interaction with age, holding constant num adults
+model3 <- lm(SPM_SNAPSUB ~ A_AGE + SPM_NUMADULTS + RENTER + A_AGE*RENTER, data = persons_snap_df)
+m3se=sqrt(diag(vcovHC(model3)))
+
+#what type of adults are in the house?
+model4 <- lm(SPM_SNAPSUB ~ A_AGE + SPM_WCOHABIT, data = persons_snap_df)
+  #age p val shoots up if we add in any of the other variables or use the famtype2 var instead of wcohabit
+m4se=sqrt(diag(vcovHC(model4)))
+
+#adding in labor force participation: perhaps as expected, this has a huge impact on SNAP. 
+model5 <- lm(SPM_SNAPSUB ~ A_AGE + NOT_IN_LABOR_FORCE + SPM_NUMADULTS + RENTER + A_AGE*NOT_IN_LABOR_FORCE + A_AGE*RENTER, data = persons_snap_df)
+m5se=sqrt(diag(vcovHC(model5)))
+
+#holding constant labor force when looking at numkids
+model6  <- lm(SPM_SNAPSUB ~ A_AGE + RENTER +NOT_IN_LABOR_FORCE + SPM_NUMKIDS, data = persons_snap_df)
+m6se=sqrt(diag(vcovHC(model6)))
+
+#all vars except cohabit
+model7 <- lm(SPM_SNAPSUB ~ A_AGE + SPM_NUMKIDS + SPM_NUMADULTS + RENTER + NOT_IN_LABOR_FORCE, data = persons_snap_df)
+
+# m7se=sqrt(diag(vcovHC(model7)))
+# 
+# summary(model7)
+# 
+# stargazer(
+#   model1,
+#   model3,
+#   model5,
+#   model7,
+#   se=list(m1se, m3se,m5se,m7se),
+#   type = "text",
+#   title = "Regression Results"
+# )
+
+```
+
+```{r fammodels table, echo=FALSE, results='asis'}
+
+fammodels=list("Sociodemographic" = model1,"Socioeconomic" = model5,"Full" = model7)
+modelsummary(fammodels,
+             title="Family Characteristics Regression Results",
+
+             vcov = "robust",
+             stars = c('*' = .05, '**' = .01, '***' = .001),
+             gof_map = c("adj.r.squared","F"),
+             output = "kableExtra",
+             estimate  = "{estimate}{stars} ({std.error})",
+             statistic= NULL,
+             coef_rename = c("A_AGE" = "Age", "MALE" = "Male", "SPM_NUMKIDS" = "Num. Kids", "SPM_NUMADULTS" = "Num. Adults",
+                             "RENTER1" = "Renter", "NOT_IN_LABOR_FORCE1" = "Not in Labor Force")
+             ) %>%   kable_styling(latex_options = c("HOLD_position"))
+
+
+```
+
+The SPM unit framework allows us to better assess the impact of the number of children and adults on SNAP subsidy received because of its inclusion of unmarried partners, foster children, and other relationship types. First, we include the number of children as a separate variable to elaborate the effect of gender on age and SNAP. We note a small gender gap: for each year aged, males receive `r get_coef(model1, "A_AGE:MALE")` more in SNAP subsidy than females. Across genders, each additional child in the resource unit results in a marginal change of `r get_coef(model1, "SPM_NUMKIDS")` in SNAP income, which is robust to the inclusion of other family characteristics.
+
+Our next model shows that each additional adult in the unit increases SNAP subsidy by `r get_coef(model5, "SPM_NUMADULTS")` . Notably, we find that the effect of not participating in the labor force on age implies receiving `r get_coef(model5, "A_AGE:NOT_IN_LABOR_FORCE1")` less than working adults each year. The effect of renter status on age compared to non-renters is also slightly negative.
+
+The final model describes that when accounting for number of children, the extra subsidy received per each additional adult in the unit decreases by nearly one third, and the extra subsidy received for non-working adults is only `r get_coef(model7, "SPM_NUMADULTS")` . We also see that renters are only expected to receive `r get_coef(model7, "RENTER1")` more SNAP subsidy than non-renters. This number is lower than expected, considering that the 2023 American average for apartment rent was 1,372.[^2]
+
+[^2]: Forbes: "The average national rent price in the United States is \$1,372, according to August 2023 rental market data from Apartment List." (2023)
+
+# Discussion
+
+The consistently negative coefficient for age across models seems to describe that, contrary to a dependency on SNAP that continues for life, older participants receive less than younger participants. This effect persists across different demographics, including race. While including number of children as a feature appears to absorb some of the effect size, age remains negatively related to SNAP. We do see more SNAP subsidy received nonworking adults but, for each year of age, these recipients benefit less from SNAP than if they were working. A similar effect is shown for renter recipients, which should be considered against rising rent prices nationwide. Overall, our models describe that regardless of demographics, older recipients receive less benefits -- an effect not explained simply by differences in socioeconomic burden over different stages of life. We conclude that in the descriptive context of both individual and family impacting characteristics, the negative effect of aging on SNAP would hinder the possibility of subsidy dependency.

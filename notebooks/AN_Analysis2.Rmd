@@ -1,0 +1,542 @@
+---
+title: "Lab2 - AN - Analysis 2"
+author: "Alec Naidoo"
+date: "2024-03-22"
+output: pdf_document
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(wooldridge)
+library(car)
+library(lmtest)
+library(sandwich)
+library(stargazer)
+library(caret)
+input_data <- read.csv("/Users/alecnaidoo/Downloads/asecpub23csv/pppub23.csv")
+```
+
+# Data Wrangling
+
+```{r setup snap dataframe, include=FALSE}
+persons_snap_df <- input_data %>% 
+  filter(!A_AGE %in% c(85, 80)) %>% 
+  filter(SPM_HEAD == 1) %>% 
+  filter(SPM_SNAPSUB > 0) %>%
+  mutate(MALE = case_when(
+      A_SEX == "1" ~ 1,
+      A_SEX == "2" ~ 0
+    ))
+
+count_not_80_and_85 <- sum(!persons_snap_df$A_AGE %in% c(80, 85))
+count_SPM_heads <- sum(persons_snap_df$SPM_HEAD == 1)
+
+# Confirmed that multiple heads in each household 
+# Confirmed different values for different SPM_ID 
+
+set.seed(123)
+
+```
+
+### 1.1. Splitting into training and test
+```{r split into exploration, inlcude = FALSE }
+exploration_size <- floor(0.3 * nrow(persons_snap_df))
+
+exploration_index <- sample(seq_len(nrow(persons_snap_df)), size = exploration_size)
+
+persons_snap_exploration_df <- persons_snap_df[exploration_index,] 
+test_df <- persons_snap_df[-exploration_index,]
+```
+
+
+```{r data wrangling, include = TRUE}
+
+persons_snap_df$SPM_SNAPSUB
+
+ggplot(persons_snap_exploration_df, aes(x = A_AGE, y = SPM_SNAPSUB)) +
+  geom_point() +  # Add points
+  labs(x = "Age", y = "SPM_SNAPSUB", title = "PAW_VAL by Age") + # Add axis labels and title
+  geom_smooth(method = "lm", se = FALSE, color = "red") 
+
+```
+
+
+```{r quick view of earnings, include = TRUE}
+
+ggplot(person_df2, aes_string(x = "PEARNVAL", y = "SPM_SNAPSUB", color = "A_AGE")) +
+    geom_point() +
+    geom_smooth(method = "lm", se = FALSE) +
+    labs(x = "Age", y = "SPM_SNAPSUB") +
+    ggtitle(("SNAP Income by Age wrt INCOME"))
+
+
+```
+
+``` {r quantile distribution of snapsub for SPM unit heads}
+
+library(dplyr)
+
+# Calculate summary statistics for PEARNVAL grouped by A_AGE
+summary_stats <- person_df2 %>%
+  group_by(SPM_POOR) %>%
+  summarize(count = n(),
+            min = min(PEARNVAL, na.rm = TRUE),
+            Q1 = quantile(PEARNVAL, 0.25, na.rm = TRUE),
+            median = median(PEARNVAL, na.rm = TRUE),
+            mean = mean(PEARNVAL, na.rm = TRUE),
+            Q3 = quantile(PEARNVAL, 0.75, na.rm = TRUE),
+            max = max(PEARNVAL, na.rm = TRUE))
+
+# Print the table
+print(summary_stats)
+
+```
+
+
+```{r, include = TRUE, echo = FALSE}
+
+age_breaks <- c(15, 20, seq(from = 30, to = ceiling(max(persons_snap_df$A_AGE) / 10) * 10, by = 10))
+
+fig_persons_snap_df <- persons_snap_df %>% 
+  mutate(age_group = cut(A_AGE, breaks = age_breaks, include.lowest = TRUE, right = FALSE))
+
+total_n <- nrow(fig_persons_snap_df)
+
+age_group_summ <- fig_persons_snap_df %>% 
+  group_by(age_group) %>% 
+  summarise(
+    avg_SNAP = round(mean(SPM_SNAPSUB, na.rm = TRUE), digits = 0),
+    count = n(),
+    proportion = round(count / total_n, digits = 2)
+  ) %>% 
+  ungroup()  
+
+kable_table <- knitr::kable(age_group_summ, 
+                            col.names = c("Age Group", "Average SNAP Income", "Frequency", "Proportion"),
+                            caption = "Average SNAP Income by Age Group", 
+                            booktabs = TRUE) 
+
+kable_table
+```
+# Kernel Density Function Plot
+
+```{r}
+library(ggplot2)
+
+# age breaks
+age_breaks <- c(15, 20, seq(from = 30, to = ceiling(max(persons_snap_df$A_AGE) / 10) * 10, by = 10))
+
+# age groups based on age breaks
+persons_snap_df$age_group <- cut(persons_snap_df$A_AGE, breaks = age_breaks, labels = FALSE)
+
+# Plot kernel density estimate for age groups
+ggplot(persons_snap_df, aes(x = SPM_SNAPSUB, color = factor(age_group))) +
+  geom_density(alpha = 0.5) +
+  scale_color_discrete(name = "Age Group") +
+  labs(x = "Metric SNAP Benefits (SPM_SNAPSUB)", y = "Density") +
+  ggtitle("Kernel Density Estimate of Metric SNAP Benefits by Age Group") +
+  theme_minimal()
+
+
+```
+
+
+```{r data wrangling, include = TRUE}
+input_data %>% filter(SPM_HEAD == 1 & !A_AGE %in% c(85, 80) & SPM_SNAPSUB > 0) %>% mutate(age_group= cut(A_AGE, c(14, 35, 50, 65, 80))) %>% group_by(age_group) %>% select(age_group,SPM_SNAPSUB) %>%   summarize(
+  mean(SPM_SNAPSUB),
+    median(SPM_SNAPSUB),
+  min(SPM_SNAPSUB),
+  max(SPM_SNAPSUB),
+  n()
+
+  )
+```
+
+
+
+# Build Basic Model
+This will serve as our baseline when comparing more complex models.
+```{r basic model creation, include = TRUE}
+
+model <- lm(SPM_SNAPSUB ~ A_AGE, data = persons_snap_exploration_df)
+
+print(summary(model))
+```
+
+
+
+## Test Log manipulation and factorizing AGE variable
+
+
+```{r compare basic model and complex model 1, include = TRUE}
+
+model <- lm(SPM_SNAPSUB ~ A_AGE, data = persons_snap_exploration_df)
+model2 <- lm(SPM_SNAPSUB ~ log(A_AGE), data = persons_snap_exploration_df)
+model3 <- lm(log(SPM_SNAPSUB) ~ A_AGE, data = persons_snap_exploration_df)
+#model4 <- lm(SPM_SNAPSUB ~ as.factor(A_AGE), data = person_df2)
+print(summary(model))
+print(summary(model2))
+print(summary(model3))
+#print(summary(model4))
+```
+
+
+## Cycle through individual plots of Age and 'Other' Variables with regression line (can include more vars)
+``` {r relationship between csp_value, echo=TRUE}
+
+# Copy dataset in case
+person_df2 <- persons_snap_exploration_df
+
+# List to store plots
+plots_list <- list()
+
+# Assuming your data frame is named person_df2
+person_df2$SPM_MEDXPNS <- factor(ifelse(person_df2$SPM_MEDXPNS > 0, "Greater than 0", "0 or Less"))
+person_df2$SPM_CHILDCAREXPNS <- factor(ifelse(person_df2$SPM_CHILDCAREXPNS > 0, "Greater than 0", "0 or Less"))
+person_df2$SPM_CHILDSUPPD <- factor(ifelse(person_df2$SPM_CHILDSUPPD > 0, "Greater than 0", "0 or Less"))
+person_df2$SPM_BBSUBVAL <- factor(ifelse(person_df2$SPM_BBSUBVAL > 0, "Greater than 0", "0 or Less"))
+
+# List of variables
+variables_to_plot <- c("SPM_MEDXPNS", "SPM_CHILDCAREXPNS", "SPM_CHILDSUPPD", "SPM_BBSUBVAL")
+
+# Loop through each variable and create scatterplot against A_AGE
+for (variable in variables_to_plot) {
+  plot <- ggplot(person_df2, aes(x = A_AGE, y = SPM_SNAPSUB, color = !!as.name(variable))) +
+    geom_point() +
+    geom_smooth(method = "lm", se = FALSE) +
+    labs(x = "Age", y = variable) +
+    scale_color_manual(values = c("Greater than 0" = "blue", "0 or Less" = "red")) +  # Specify colors directly
+    ggtitle(paste("SNAP Income by Age wrt: ", variable))
+  
+  plots_list[[variable]] <- plot  # Store the plot in the list
+}
+
+# Print each plot
+for (variable in names(plots_list)) {
+  print(plots_list[[variable]])
+}
+
+
+
+```
+
+
+## Plot Age vs Govt Assistance Income wrt observed categorical variables
+While above plots are interesting, we can further examing any particular trends in the main relationship wrt indicator variables.
+
+``` {r relationship between age and SNAP Welfare wrt var colors, message=FALSE, echo=TRUE}
+
+# List to store plots
+plots_list <- list()
+
+# List of variables
+categorical_variables_to_plot <- c("A_SEX", "PRCITSHP", "SPM_FamType", "SPM_HHisp", "SPM_HMaritalStatus", "SPM_HRace", "SPM_NumAdults", "SPM_NumKids", "SPM_NumPer", "SPM_Poor", "SPM_TenMortStatus", "SPM_wCohabit", "SPM_wFoster22", "SPM_wNewHead", "SPM_wNewParent", "SPM_wUI_LT15", "OI_OFF", "ANN_YN", "DIS_HP", "CAP_YN", "SPM_MedXpns", "SPM_ChildcareXpns", "SPM_ChildSupPd", "SPM_BBSUBVAL", "WRK_CK", "WTEMP", "SS_YN", "ANN_YN")
+categorical_variables_to_plot <- gsub("SPM_", "SPM_", toupper(categorical_variables_to_plot))
+
+
+# Copy dataset in case
+person_df2 <- persons_snap_exploration_df
+
+# Make variables categorical in R
+person_df2$A_SEX <- factor(person_df2$A_SEX)
+person_df2$PTOT_R <- factor(person_df2$PTOT_R)
+person_df2$SPM_FAMTYPE <- factor(person_df2$SPM_FAMTYPE)
+person_df2$SPM_HHISP <- factor(person_df2$SPM_HHISP)
+person_df2$SPM_HMARITALSTATUS <- factor(person_df2$SPM_HMARITALSTATUS)
+person_df2$SPM_HRACE <- factor(person_df2$SPM_HRACE)
+#person_df2$SPM_NUMADULTS <- factor(person_df2$SPM_NUMADULTS)
+#person_df2$SPM_NUMKIDS <- factor(person_df2$SPM_NUMKIDS)
+#person_df2$SPM_NUMPER <- factor(person_df2$SPM_NUMPER)
+person_df2$SPM_POOR <- factor(person_df2$SPM_POOR)
+person_df2$SPM_TENMORTSTATUS <- factor(person_df2$SPM_TENMORTSTATUS)
+person_df2$SPM_WCOHABIT <- factor(person_df2$SPM_WCOHABIT)
+person_df2$SPM_WFOSTER22 <- factor(person_df2$SPM_WFOSTER22)
+person_df2$SPM_WNEWHEAD <- factor(person_df2$SPM_WNEWHEAD)
+person_df2$SPM_WNEWPARENT <- factor(person_df2$SPM_WNEWPARENT)
+person_df2$SPM_WUI_LT15 <- factor(person_df2$SPM_WUI_LT15)
+person_df2$OI_OFF <- factor(person_df2$OI_OFF)
+person_df2$ANN_YN <- factor(person_df2$ANN_YN)
+person_df2$DIS_HP <- factor(person_df2$DIS_HP)
+person_df2$CAP_YN <- factor(person_df2$CAP_YN)
+#person_df2$FINC_INT <- factor(person_df2$FINC_INT) 
+person_df2$SPM_MEDXPNS <- as.numeric(person_df2$SPM_MEDXPNS)
+person_df2$SPM_CHILDCAREXPNS <- as.numeric(person_df2$SPM_CHILDCAREXPNS)
+person_df2$SPM_CHILDSUPPD <- as.numeric(person_df2$SPM_CHILDSUPPD)
+person_df2$SPM_BBSUBVAL <- as.numeric(person_df2$SPM_BBSUBVAL)
+person_df2$WRK_CK <- factor(person_df2$WRK_CK)
+person_df2$WTEMP <- factor(person_df2$WTEMP)
+person_df2$SS_YN <- factor(person_df2$SS_YN)
+person_df2$ANN_YN <- factor(person_df2$ANN_YN)
+person_df2$PRDTRACE <- factor(person_df2$PRDTRACE)
+person_df2$PRCITSHP <- factor(person_df2$PRCITSHP)
+person_df2$PERRP <- factor(person_df2$PERRP)
+person_df2$PEINUSYR <- factor(person_df2$PEINUSYR)
+
+# Transformations
+
+# Factor new var KIDSYN
+person_df2 <- person_df2 %>% 
+  mutate(KIDSYN = ifelse(SPM_NUMKIDS == 0, 0, 1), as.factor(KIDSYN)) %>%
+  mutate(MALE = case_when(
+    A_SEX == "1" ~ 1,
+    A_SEX == "2" ~ 0
+  ))
+
+# NOT Labor Force coding
+person_df2 <- person_df2 %>%
+  mutate(NOT_IN_LABOR_FORCE = case_when(
+    PEMLR %in% c(1, 2, 3, 4) ~ 0,
+    PEMLR %in% c(5, 6, 7) ~ 1,
+    TRUE ~ NA_real_
+  ), as.factor(NOT_IN_LABOR_FORCE))
+
+# Renter or Owner
+person_df2 <- person_df2 %>%
+  mutate(RENTER = case_when(
+    SPM_TENMORTSTATUS == 3  ~ 1,
+    SPM_TENMORTSTATUS %in% c(1, 2)  ~ 0
+  ), as.factor(RENTER))
+
+# Capital Gains Received
+person_df2 <- person_df2 %>%
+  mutate(CapitalGainsReceived = case_when(
+    SPM_TENMORTSTATUS == 3  ~ 1,
+    SPM_TENMORTSTATUS %in% c(1, 2)  ~ 0
+  ), as.factor(RENTER))
+
+# Social Security NOT Received
+person_df2 <- person_df2 %>%
+  mutate(SOCIALSECURITY_NOT_RECEIVED = case_when(
+    SS_YN == 2  ~ 1,
+    SS_YN %in% c(1)  ~ 0
+  ), as.factor(SOCIALSECURITY_NOT_RECEIVED))
+
+
+```
+
+``` {r create plots that illustrate relationship between AGE and SNAPSUB wrt other vars, include = TRUE, warning=FALSE}
+# Loop through each variable and create scatterplot against A_AGE
+for (variable in categorical_variables_to_plot) {
+  plot <- ggplot(person_df2, aes_string(x = "A_AGE", y = "SPM_SNAPSUB", color = variable)) +
+    geom_point() +
+    geom_smooth(method = "lm", se = FALSE) +
+    labs(x = "Age", y = "SPM_SNAPSUB") +
+    ggtitle(paste("SNAP Income by Age wrt: ", variable))
+  
+  plots_list[[variable]] <- plot  # Store the plot in the list
+}
+
+# Print each plot
+for (variable in names(plots_list)) {
+  print(plots_list[[variable]])
+}
+
+
+```
+## Final Model : Add Complexity
+```{r compare basic model and complex model 1, include = TRUE, warning=FALSE}
+
+model1 <- lm(SPM_SNAPSUB ~ A_AGE + SPM_POOR, data = person_df2)
+model2 <- lm(SPM_SNAPSUB ~ A_AGE + MALE + A_AGE*MALE + KIDSYN, data=person_df2)
+model3 <- lm(SPM_SNAPSUB ~ A_AGE + MALE + A_AGE*MALE + SPM_NUMKIDS, data = person_df2)
+model4 <- lm(SPM_SNAPSUB ~ A_AGE + MALE + A_AGE*MALE + SPM_NUMKIDS + SPM_NUMADULTS, data = person_df2) # (renting) is significant
+model5 <- lm(SPM_SNAPSUB ~ A_AGE + MALE + A_AGE*MALE + SPM_NUMKIDS + SPM_NUMADULTS + RENTER, data = person_df2)
+model6 <- lm(SPM_SNAPSUB ~ A_AGE + MALE + A_AGE*MALE + SPM_NUMKIDS + SPM_NUMADULTS + RENTER + NOT _IN_LABOR_FORCE, data = person_df2)
+model7 <- lm(SPM_SNAPSUB ~ A_AGE + MALE + A_AGE*MALE + SPM_NUMKIDS + SPM_NUMADULTS + RENTER + NOT_IN_LABOR_FORCE + SPM_POVTHRESHOLD, data = person_df2)
+
+
+modelx <- lm(SPM_SNAPSUB ~ A_AGE + MALE + A_AGE*MALE + SPM_NUMKIDS + SPM_NUMADULTS + RENTER + NOT_IN_LABOR_FORCE + PRDTRACE, data = person_df2) # races are significant for HW/Pac Islander White/HP Asian/HP
+modelx <- lm(SPM_SNAPSUB ~ A_AGE + MALE + A_AGE*MALE + SPM_NUMKIDS + SPM_NUMADULTS + RENTER + NOT_IN_LABOR_FORCE + SPM_HRACE, data = person_df2) # Other category is only one that is significant
+modelx <- lm(SPM_SNAPSUB ~ A_AGE + MALE + A_AGE*MALE + SPM_NUMKIDS + SPM_NUMADULTS + RENTER + NOT_IN_LABOR_FORCE + SPM_HMARITALSTATUS, data = person_df2) #Interesting signficance for separate and never married. I understand if never married, but why is separated so significant? Is there a 
+
+# Generate the table
+stargazer(model1, model2, model3, model4, model5, model6, model7, type = "text", title = "Regression Results", align = TRUE)
+
+```
+```{r sandbox graphs, echo=TRUE}
+test_df <- test_df %>%
+  mutate(
+    model_predictions = predict(model7),
+    model_residuals = resid(model7)
+  )
+
+plot_1 <- test_df %>%
+  ggplot(aes(x = model_predictions, y = model_residuals)) +
+  geom_point() + stat_smooth() + labs(x = "Fitted Values", y = "Residuals", title = "Model Predictions vs. Residuals")
+
+plot_1
+```
+
+
+```{r sandbox graphs, echo=TRUE}
+ggplot(person_df, aes(x = A_AGE, y = log(PAW_VAL))) +
+  geom_point() +  # Add points
+  labs(x = "Age", y = "log PAW_VAL", title = "PAW_VAL by Age") + # Add axis labels and title
+  geom_smooth(method = "lm", se = FALSE, color = "red") 
+```
+
+```{r sandbox graphs 2, echo=TRUE}
+
+person_df2 <- persons_snap_exploration_df
+
+person_df2$SPM_CHILDSUPPD <- as.numeric(as.character(person_df2$SPM_CHILDSUPPD))
+
+ggplot(person_df2, aes(x = SPM_CHILDSUPPD, y = SPM_SNAPSUB)) +
+  geom_point() +  # Add points
+  #labs(x = "Age", y = "SPM_CHILDSUPPD") + # Add axis labels and title
+  geom_smooth(method = "lm", se = FALSE, color = "red") 
+```
+
+``` {r redo data wrangling as per TH code}
+set.seed(123)
+input_data <- read.csv("/Users/alecnaidoo/Downloads/asecpub23csv/pppub23.csv")
+hh_house <- read.csv("/Users/alecnaidoo/Downloads/asecpub23csv/hhpub23.csv")
+
+input_data <- input_data %>% 
+  left_join(hh_house, by = c("PH_SEQ" = "H_SEQ"))
+
+# Wrangle Input Data
+persons_snap_df <- input_data %>%
+  filter(!A_AGE %in% c(85, 80)) %>%
+  filter(SPM_HEAD == 1) %>%
+  filter(SPM_SNAPSUB > 0) %>%
+  filter(!SS_YN == 0) %>% # This doesn't end up removing
+  mutate(A_SEX = as.factor(A_SEX)) %>%
+  mutate(MALE = case_when(A_SEX == 1 ~ "1",
+                          A_SEX == 2 ~ "0")) %>%
+  mutate(IS_HISPANIC = case_when(PEHSPNON == 1 ~ "1",
+                                 PEHSPNON == 2 ~ "0",)) %>%
+  mutate(DEGREE = case_when(
+    A_HGA %in% c(0, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40) ~ "0",
+    A_HGA %in% c(41, 42, 43, 44, 45, 46) ~ "1"
+  )) %>%
+  mutate(RENTER = case_when(SPM_TENMORTSTATUS == 3  ~ "1",
+                            SPM_TENMORTSTATUS %in% c(1, 2)  ~ "0")) %>%
+  mutate(IS_DISABLED = case_when(DIS_HP == 1 ~ "1",
+                                 DIS_HP == 2 ~ "0")) %>%
+  mutate(
+    RACE = case_when(
+      IS_HISPANIC == "1" &
+        PRDTRACE %in% c(1, 2, 3, 4, 5) ~ "Hispanic only",
+      PRDTRACE %in% c(1) ~ "White only",
+      PRDTRACE %in% c(2) ~ "Black only",
+      PRDTRACE %in% c(3) ~ "American Indian/Alaskan Native only",
+      PRDTRACE %in% c(4) ~ "Asian only",
+      PRDTRACE %in% c(5) ~ "Hawaiian/Pacific Islander only",
+      TRUE ~ "Mixed"
+    )
+  ) %>%
+  mutate(NOT_IN_LABOR_FORCE = case_when(PEMLR %in% c(1, 2, 3, 4) ~ "0",
+                                        PEMLR %in% c(5, 6, 7) ~ "1",)) %>%
+  filter(!PEMLR == 0) %>% # Drops 5 records
+  mutate(RECEIVE_SS_INCOME = case_when(SS_YN == 1 ~ "1",
+                                       SS_YN == 2 ~ "0")) %>%
+  filter(!GESTFIPS %in% c(02, 15)) %>% #taking out hawaii and alaska (removes 147 observations)
+  mutate(SPM_WCOHABIT = as.character(SPM_WCOHABIT)) %>%
+  strings2factors() %>%
+  select(
+    SPM_SNAPSUB,
+    A_AGE,
+    SPM_NUMKIDS,
+    SPM_NUMADULTS,
+    RENTER,
+    NOT_IN_LABOR_FORCE,
+    SPM_WCOHABIT,
+    RACE,
+    MALE,
+    DEGREE,
+    RECEIVE_SS_INCOME
+  )
+
+# Create Exploration Set 
+exploration_size <- floor(0.3 * nrow(persons_snap_df))
+
+exploration_index <- sample(seq_len(nrow(persons_snap_df)), size = exploration_size)
+
+persons_snap_exploration_df <- persons_snap_df[exploration_index,] 
+
+# Create confirmation set
+persons_snap_df <- persons_snap_df[-exploration_index,]
+```
+
+```{r, include = TRUE, echo = FALSE}
+
+age_breaks <- c(15, 20, seq(from = 30, to = ceiling(max(persons_snap_df$A_AGE) / 10) * 10, by = 10))
+
+fig_persons_snap_df <- persons_snap_df %>% 
+  mutate(age_group = cut(A_AGE, breaks = age_breaks, include.lowest = TRUE, right = FALSE))
+
+total_n <- nrow(fig_persons_snap_df)
+
+age_group_summ <- fig_persons_snap_df %>% 
+  group_by(age_group) %>% 
+  summarise(
+    avg_SNAP = round(mean(SPM_SNAPSUB, na.rm = TRUE), digits = 0),
+    count = n(),
+    proportion = round(count / total_n, digits = 2)
+  ) %>% 
+  ungroup()  
+
+kable_table <- knitr::kable(age_group_summ, 
+                            col.names = c("Age Group", "Average SNAP Income", "Frequency", "Proportion"),
+                            caption = "Average SNAP Income by Age Group", 
+                            booktabs = TRUE) 
+
+kable_table
+```
+
+
+```{r create plot for SNAP by Age, include = TRUE, echo = FALSE, warning=FALSE, message=FALSE, fig.width=6, fig.height=3.5}
+
+library(ggplot2)
+library(scales)
+
+min_age <- min(persons_snap_exploration_df$A_AGE)
+
+# Group data by age and summarize the count of records for each age
+age_count <- persons_snap_exploration_df %>%
+  group_by(A_AGE) %>%
+  summarise(count = n(), .groups = 'drop') 
+
+# Base ggplot object with points and linear model
+age_snap_plot <- ggplot(persons_snap_exploration_df, aes(x = A_AGE, y = SPM_SNAPSUB)) +
+  geom_point(alpha = 0.2, color = "grey20") +
+  geom_smooth(method = "lm", color = "#CC0000", size = 0.75, se = TRUE) +
+  theme_minimal() +
+  labs(
+    x = "Age",
+    y = "SNAP Subsidy",
+    title = "Relationship between Age and SNAP Subsidy",
+    caption = "Exploration Set: 2023 Persons Dataset from ANES"
+  ) +
+  scale_x_continuous(limits = c(min_age, NA)) +
+  scale_y_continuous(labels = dollar) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.caption = element_text(hjust = 0),
+    axis.text = element_text(color = "grey20"),
+    axis.title = element_text(face = "bold", color = "grey20"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
+```
+
+``` {r print plots}
+library(gridExtra)
+
+# Create the kable table grob
+kable_grob <- tableGrob(kable_table, theme=ttheme_minimal(), rows=NULL) 
+
+# Combine the table and plot side by side
+combined_plot <- grid.arrange(
+  kable_grob,
+  age_snap_plot,
+  ncol = 2
+)
+
+# Print the combined plot
+print(combined_plot)
+
+```
